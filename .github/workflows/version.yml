@@ -1,0 +1,36 @@
+name: Set Version (NB.GV)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to set (e.g., 1.2.0 or 1.2.1-beta)'
+        required: true
+
+jobs:
+  set-version:
+    name: Set Version with Nerdbank.GitVersioning
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for NB.GV to read git history
+
+      - name: Setup .NET SDK (for NB.GV CLI)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Nerdbank.GitVersioning CLI
+        run: dotnet tool install --global nbgv
+
+      - name: Set version
+        run: |
+          nbgv set-version "${{ github.event.inputs.version }}"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add version.json
+          git commit -m "chore: Set version to ${{ github.event.inputs.version }}"
+          git push origin HEAD
