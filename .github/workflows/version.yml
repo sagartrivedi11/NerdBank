@@ -1,54 +1,73 @@
-name: Set Version (NB.GV Init + Set)
+name: Create Release Branch
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semantic version to set (e.g., 1.2.0 or 1.2.1-beta)'
+        description: 'Semantic version (e.g., 1.1.0 or 1.2.1-beta)'
         required: true
       release:
-        description: 'Is this a public release? Set to true for release branches'
+        description: 'Mark as release and create release/vX.Y.Z branch'
         required: false
         default: 'false'
 
 jobs:
   set-version:
-    name: Set Version with Nerdbank.GitVersioning
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for NB.GV to work properly
+          fetch-depth: 0  # Required for NB.GV versioning
 
-      - name: Setup .NET SDK (for NB.GV CLI)
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install NB.GV CLI
+      - name: Install Nerdbank.GitVersioning CLI
         run: dotnet tool install --global nbgv
 
-      - name: Ensure NB.GV is installed (version.json exists)
+      - name: Determine release branch name (if applicable)
+        id: release_branch
+        run: |
+          VERSION=${{ github.event.inputs.version }}
+          IS_RELEASE=${{ github.event.inputs.release }}
+          
+          if [ "$IS_RELEASE" = "true" ]; then
+            echo "branch_name=release/v$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "branch_name=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release branch (if needed)
+        if: ${{ github.event.inputs.release == 'true' }}
+        run: |
+          BRANCH_NAME=release/v${{ github.event.inputs.version }}
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+
+      - name: Ensure NB.GV is initialized
         run: |
           if [ ! -f version.json ]; then
-            echo "Running 'nbgv install' to initialize versioning"
+            echo "Running nbgv install to create version.json"
             nbgv install
-            git config user.name "GitHub Actions"
-            git config user.email "actions@github.com"
             git add version.json
             git commit -m "chore: Initialize NB.GV with version.json"
             git push origin HEAD
-          else
-            echo "NB.GV already initialized (version.json exists)"
           fi
 
-      - name: Set version via NB.GV
+      - name: Set version with NB.GV
         run: |
-          nbgv set-version "${{ github.event.inputs.version }}"
-          
-          if [ "${{ github.event.inputs.release }}" = "true" ]; then
+          VERSION=${{ github.event.inputs.version }}
+          IS_RELEASE=${{ github.event.inputs.release }}
+
+          nbgv set-version "$VERSION"
+
+          if [ "$IS_RELEASE" = "true" ]; then
             echo "Setting release=true in version.json"
             jq '.release = true' version.json > tmp.json && mv tmp.json version.json
           fi
@@ -56,5 +75,14 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add version.json
-          git commit -m "chore: Set version to ${{ github.event.inputs.version }}"
-          git push origin HEAD
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: Set version to $VERSION"
+          fi
+
+      - name: Push version changes to correct branch
+        run: |
+          BRANCH_NAME=${{ steps.release_branch.outputs.branch_name }}
+          git push origin HEAD:$BRANCH_NAME
