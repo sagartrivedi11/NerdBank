@@ -1,4 +1,4 @@
-name: Set Version (NB.GV)
+name: Set Version (NB.GV Init + Set)
 
 on:
   workflow_dispatch:
@@ -6,6 +6,10 @@ on:
       version:
         description: 'Semantic version to set (e.g., 1.2.0 or 1.2.1-beta)'
         required: true
+      release:
+        description: 'Is this a public release? Set to true for release branches'
+        required: false
+        default: 'false'
 
 jobs:
   set-version:
@@ -16,19 +20,39 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required for NB.GV to read git history
+          fetch-depth: 0  # Needed for NB.GV to work properly
 
       - name: Setup .NET SDK (for NB.GV CLI)
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install Nerdbank.GitVersioning CLI
+      - name: Install NB.GV CLI
         run: dotnet tool install --global nbgv
 
-      - name: Set version
+      - name: Ensure NB.GV is installed (version.json exists)
+        run: |
+          if [ ! -f version.json ]; then
+            echo "Running 'nbgv install' to initialize versioning"
+            nbgv install
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git add version.json
+            git commit -m "chore: Initialize NB.GV with version.json"
+            git push origin HEAD
+          else
+            echo "NB.GV already initialized (version.json exists)"
+          fi
+
+      - name: Set version via NB.GV
         run: |
           nbgv set-version "${{ github.event.inputs.version }}"
+          
+          if [ "${{ github.event.inputs.release }}" = "true" ]; then
+            echo "Setting release=true in version.json"
+            jq '.release = true' version.json > tmp.json && mv tmp.json version.json
+          fi
+
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add version.json
